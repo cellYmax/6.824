@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -17,6 +18,13 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+type SortedKey []KeyValue
+
+// Len 重写len,swap,less才能排序
+func (k SortedKey) Len() int           { return len(k) }
+func (k SortedKey) Swap(i, j int)      { k[i], k[j] = k[j], k[i] }
+func (k SortedKey) Less(i, j int) bool { return k[i].Key < k[j].Key }
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -40,12 +48,13 @@ func Worker(mapf func(string, string) []KeyValue,
 			//fmt.Println(&task)
 			callDone(&task)
 		case WaitingTask:
-			time.Sleep(time.Second)
+			time.Sleep(time.Second * 5)
 			fmt.Println("All tasks are working, please waiting...")
 		case ReduceTask:
 			DoReduceTask(reducef, &task)
 			callDone(&task)
 		case ExitTask:
+			time.Sleep(time.Second * 5)
 			flag = false
 		}
 	}
@@ -56,29 +65,30 @@ func DoReduceTask(reducef func(string, []string) string, task *Task) {
 	outputFileNum := task.TaskId
 	var intermediate []KeyValue
 	intermediate = Sort(task.TmpFileLists)
+	dir, _ := os.Getwd()
+	tempFile, err := os.CreateTemp(dir, "mr-tmp-*")
+	if err != nil {
+		log.Fatal("Failed to create temp file", err)
+	}
 	i := 0
 	for i < len(intermediate) {
-		oname := "mr-out-" + strconv.Itoa(outputFileNum)
-		ofile, _ := os.Create(oname)
-
-		dir, _ := os.Getwd()
-		os.CreateTemp(dir, oname)
 		j := i + 1
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
-		values := []string{}
+		var values []string
 		for k := i; k < j; k++ {
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
-
 		// this is the correct format for each line of Reduce output.
-		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-
+		fmt.Fprintf(tempFile, "%v %v\n", intermediate[i].Key, output)
 		i = j
-		ofile.Close()
+
 	}
+	tempFile.Close()
+	fn := fmt.Sprintf("mr-out-%d", outputFileNum)
+	os.Rename(tempFile.Name(), fn)
 }
 
 func Sort(files []string) []KeyValue {
@@ -94,6 +104,7 @@ func Sort(files []string) []KeyValue {
 			kva = append(kva, kv)
 		}
 	}
+	sort.Sort(SortedKey(kva))
 	return kva
 }
 
