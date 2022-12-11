@@ -33,16 +33,18 @@ type TaskType int
 type TaskState int
 
 type Task struct {
-	TaskId    int
-	Filename  string
-	TaskType  TaskType  //MapTask-0 ReduceTask-1 NoneTask-2 ExitTask-3
-	TaskState TaskState //Working-0 Waiting-1 Done-2
+	TaskId       int
+	Filename     string
+	TaskType     TaskType  //MapTask-0 ReduceTask-1 WaitingTask-2 ExitTask-3
+	TaskState    TaskState //Working-0 Waiting-1 Done-2
+	NReduce      int
+	TmpFileLists []string
 }
 
 const (
 	MapTask TaskType = iota
 	ReduceTask
-	NoneTask
+	WaitingTask
 	ExitTask
 )
 

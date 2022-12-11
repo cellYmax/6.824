@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -30,10 +31,76 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	var flag = true
+	for flag {
+		task := GetTask()
+		switch task.TaskType {
+		case MapTask:
+			DoMapTask(mapf, &task)
+			//fmt.Println(&task)
+			callDone(&task)
+		case WaitingTask:
+			time.Sleep(time.Second)
+			fmt.Println("All tasks are working, please waiting...")
+		case ReduceTask:
+			DoReduceTask(reducef, &task)
+			callDone(&task)
+		case ExitTask:
+			flag = false
+		}
+	}
 
-	task := GetTask()
+}
+
+func DoReduceTask(reducef func(string, []string) string, task *Task) {
+	outputFileNum := task.TaskId
+	var intermediate []KeyValue
+	intermediate = Sort(task.TmpFileLists)
+	i := 0
+	for i < len(intermediate) {
+		oname := "mr-out-" + strconv.Itoa(outputFileNum)
+		ofile, _ := os.Create(oname)
+
+		dir, _ := os.Getwd()
+		os.CreateTemp(dir, oname)
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+		ofile.Close()
+	}
+}
+
+func Sort(files []string) []KeyValue {
+	var kva []KeyValue
+	for _, file := range files {
+		ofile, _ := os.Open(file)
+		dec := json.NewDecoder(ofile)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+	}
+	return kva
+}
+
+func DoMapTask(mapf func(string, string) []KeyValue, task *Task) {
 	file, err := os.Open(task.Filename)
 	//fmt.Println(reply.Filename)
+	var intermediate []KeyValue
 	if err != nil {
 		log.Fatalf("cannot open %v", task.Filename)
 	}
@@ -42,16 +109,36 @@ func Worker(mapf func(string, string) []KeyValue,
 		log.Fatalf("cannot read %v", task.Filename)
 	}
 	file.Close()
-	kva := mapf(task.Filename, string(content))
-	//保存kva到文件中
-	oname := "mr-tmp-" + strconv.Itoa(task.TaskId)
-	ofile, _ := os.Create(oname)
-	enc := json.NewEncoder(ofile)
-	for _, kv := range kva {
-		if err := enc.Encode(&kv); err != nil {
-			break
-		}
+	intermediate = mapf(task.Filename, string(content))
+	//fmt.Println(intermediate)
+	nReduce := task.NReduce
+	KV := make([][]KeyValue, nReduce)
+	for _, kv := range intermediate { //KV[ihash(kv.Key)%nReduce] --> {{Key : Value},{Key : Value}...}
+		KV[ihash(kv.Key)%nReduce] = append(KV[ihash(kv.Key)%nReduce], kv)
 	}
+	for i := 0; i < nReduce; i++ { //保存intermediate到文件中
+		oname := "mr-tmp-" + strconv.Itoa(task.TaskId) + "-" + strconv.Itoa(i)
+		ofile, _ := os.Create(oname)
+		enc := json.NewEncoder(ofile)
+		for _, kv := range KV[i] {
+			if err := enc.Encode(&kv); err != nil {
+				break
+			}
+		}
+		ofile.Close()
+	}
+}
+
+func callDone(task *Task) Task {
+	args := task
+	reply := Task{}
+	ok := call("Coordinator.MarkTaskDone", &args, &reply)
+	if ok {
+		//fmt.Println("call success")
+	} else {
+		fmt.Printf("call failed!\n")
+	}
+	return reply
 }
 
 func GetTask() Task {
@@ -59,8 +146,7 @@ func GetTask() Task {
 	task := Task{}
 	ok := call("Coordinator.PollTask", &args, &task)
 	if ok {
-		fmt.Println("call success")
-		fmt.Println(task)
+		//fmt.Println("call success")
 	} else {
 		fmt.Printf("call failed!\n")
 	}
