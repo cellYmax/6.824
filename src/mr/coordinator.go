@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Coordinator struct {
@@ -31,6 +32,7 @@ const (
 
 type TaskInfo struct {
 	TaskState TaskState
+	startTime time.Time
 	TaskPtr   *Task
 }
 
@@ -169,7 +171,38 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	// Your code here.
 
 	c.server()
+	go c.CrashDetector()
 	return &c
+}
+
+func (c *Coordinator) CrashDetector() {
+	for {
+		m.Lock()
+		if c.taskPhase == ExitPhase {
+			m.Unlock()
+			break
+		}
+		for _, info := range c.taskInfoHolder.taskInfoTable {
+			if info.TaskState == Working && time.Since(info.startTime) > 9*time.Second {
+				fmt.Printf("the task[ %d ] is crash,take [%d] s\n", info.TaskPtr.TaskId, time.Since(info.startTime))
+				switch info.TaskPtr.TaskType {
+				case MapTask:
+					{
+						c.MapChannel <- info.TaskPtr
+						info.TaskState = Waiting
+						fmt.Println(info.TaskPtr)
+					}
+				case ReduceTask:
+					{
+						c.ReduceChannel <- info.TaskPtr
+						info.TaskState = Waiting
+						fmt.Println(info.TaskPtr)
+					}
+				}
+			}
+		}
+		m.Unlock()
+	}
 }
 
 func (c *Coordinator) makeMapTasks(files []string) {
@@ -237,6 +270,7 @@ func (t *TaskInfoHolder) State2Working(id int) bool {
 	if !ok || info.TaskState != Waiting {
 		return false
 	}
+	info.startTime = time.Now()
 	info.TaskState = Working
 	//fmt.Println(info)
 	return true

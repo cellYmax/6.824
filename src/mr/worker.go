@@ -54,11 +54,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			DoReduceTask(reducef, &task)
 			callDone(&task)
 		case ExitTask:
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Second)
 			flag = false
 		}
 	}
-
+	time.Sleep(time.Second)
 }
 
 func DoReduceTask(reducef func(string, []string) string, task *Task) {
@@ -84,7 +84,6 @@ func DoReduceTask(reducef func(string, []string) string, task *Task) {
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(tempFile, "%v %v\n", intermediate[i].Key, output)
 		i = j
-
 	}
 	tempFile.Close()
 	fn := fmt.Sprintf("mr-out-%d", outputFileNum)
